@@ -93,7 +93,7 @@ export class Client {
     private readonly interactionHandler: InteractionHandler<APIApplicationCommandInteraction | APIMessageComponentInteraction | APIModalSubmitInteraction>
 
     get handlers() {
-        return [this.verify, this.handleInteraction]
+        return [this.verify(), this.handleInteraction()]
     }
 
     constructor(options: ClientOptions) {
@@ -378,96 +378,93 @@ export class Client {
         )
     }
 
-    private verify(
-        req: Request,
-        res: Response,
-        next: NextFunction
-    ) {
-        const abort = () => {
-            res.sendStatus(401)
-        }
+    private verify() {
+        return (req: Request, res: Response, next: NextFunction) => {
+            const abort = () => {
+                res.sendStatus(401)
+            }
 
-        const signature = req.get('X-Signature-Ed25519')
-        const timestamp = req.get('X-Signature-Timestamp')
+            const signature = req.get('X-Signature-Ed25519')
+            const timestamp = req.get('X-Signature-Timestamp')
 
-        if (signature === undefined || timestamp === undefined) {
-            abort()
-            return
-        }
+            if (signature === undefined || timestamp === undefined) {
+                abort()
+                return
+            }
 
-        const onBodyComplete = (rawBody: string) => {
-            try {
-                const isValid = nacl.sign.detached.verify(
-                    Buffer.from(timestamp+rawBody),
-                    Buffer.from(signature, 'hex'),
-                    Buffer.from(this.publicKey, 'hex')
-                )
-                if (isValid) {
-                    req.body = JSON.parse(rawBody)
-                    next()
-                } else {
+            const onBodyComplete = (rawBody: string) => {
+                try {
+                    const isVerified = nacl.sign.detached.verify(
+                        Buffer.from(timestamp+rawBody),
+                        Buffer.from(signature, 'hex'),
+                        Buffer.from(this.publicKey, 'hex')
+                    )
+                    if (isVerified) {
+                        req.body = JSON.parse(rawBody)
+                        next()
+                    } else {
+                        abort()
+                    }
+                } catch (e) {
                     abort()
                 }
-            } catch {
-                abort()
             }
-        }
 
-        if (req.body) {
-            if (typeof req.body === 'string') {
-                onBodyComplete(req.body)
-            } else if (Buffer.isBuffer(req.body)) {
-                onBodyComplete(req.body.toString())
+            if (req.body) {
+                if (typeof req.body === 'string') {
+                    onBodyComplete(req.body)
+                } else if (Buffer.isBuffer(req.body)) {
+                    onBodyComplete(req.body.toString())
+                } else {
+                    onBodyComplete(JSON.stringify(req.body))
+                }
             } else {
-                onBodyComplete(JSON.stringify(req.body))
+                let rawBody = ''
+                req.on('data', chunk => {
+                    rawBody += chunk.toString()
+                })
+                req.on('end', () => {
+                    onBodyComplete(rawBody)
+                })
             }
-        } else {
-            let rawBody = ''
-            req.on('data', chunk => {
-                rawBody += chunk.toString()
-            })
-            req.on('end', () => {
-                onBodyComplete(rawBody)
-            })
         }
     }
 
-    private async handleInteraction(
-        req: Request,
-        res: Response
-    ) {
-        const interaction = req.body as APIInteraction
-        switch (interaction.type) {
-        case InteractionType.Ping:
-            const pong: APIInteractionResponsePong = {
-                type: InteractionResponseType.Pong
-            }
-            res.json(pong)
-            return
-        case InteractionType.ApplicationCommand:
-            res.sendStatus(204)
-            await this.handleApplicationCommand(interaction)
-            return
-        case InteractionType.MessageComponent:
-            res.sendStatus(204)
-            await this.interactionHandler(this, interaction)
-            return
-        case InteractionType.ApplicationCommandAutocomplete:
-            const autocompleteData = await this.handleAutocomplete(interaction)
-            if (autocompleteData === undefined) {
-                res.sendStatus(204)
-            } else {
-                const autocomplete: APIApplicationCommandAutocompleteResponse = {
-                    type: InteractionResponseType.ApplicationCommandAutocompleteResult,
-                    data: autocompleteData
+    private handleInteraction() {
+        return async (req: Request, res: Response) => {
+            const interaction = req.body as APIInteraction
+            switch (interaction.type) {
+            case InteractionType.Ping:
+                const pong: APIInteractionResponsePong = {
+                    type: InteractionResponseType.Pong
                 }
-                res.json(autocomplete)
+                res.json(pong)
+                return
+            case InteractionType.ApplicationCommand:
+                res.status(204)
+                await this.handleApplicationCommand(interaction)
+                return
+            case InteractionType.MessageComponent:
+                res.status(204)
+                await this.interactionHandler(this, interaction)
+                return
+            case InteractionType.ApplicationCommandAutocomplete:
+                const autocompleteData = await this.handleAutocomplete(interaction)
+                if (autocompleteData === undefined) {
+                    res.status(204)
+                } else {
+                    const autocomplete: APIApplicationCommandAutocompleteResponse = {
+                        type: InteractionResponseType.ApplicationCommandAutocompleteResult,
+                        data: autocompleteData
+                    }
+                    res.json(autocomplete)
+                }
+                return
+            case InteractionType.ModalSubmit:
+                res.status(204)
+                await this.interactionHandler(this, interaction)
+                return
             }
-            return
-        case InteractionType.ModalSubmit:
-            res.sendStatus(204)
-            await this.interactionHandler(this, interaction)
-            return
         }
     }
 
@@ -505,6 +502,11 @@ export class Client {
 
     serve(path: string, port: number) {
         const app = express()
+        app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+            res.sendStatus(500)
+            console.error(err)
+            next(err)
+        })
         app.post(path, this.handlers)
         app.listen(port)
     }
