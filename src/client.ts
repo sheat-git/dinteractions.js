@@ -23,32 +23,33 @@ import {
     InteractionResponseType,
     InteractionType,
     MessageFlags,
+    RESTGetAPIApplicationCommandResult,
     RESTGetAPIApplicationCommandsResult,
     RESTGetAPIApplicationGuildCommandsResult,
     RESTGetAPIWebhookWithTokenMessageResult,
+    RESTPatchAPIApplicationCommandJSONBody,
+    RESTPatchAPIApplicationCommandResult,
+    RESTPatchAPIApplicationGuildCommandJSONBody,
+    RESTPatchAPIApplicationGuildCommandResult,
     RESTPatchAPIWebhookWithTokenMessageJSONBody,
     RESTPatchAPIWebhookWithTokenMessageResult,
     RESTPostAPIApplicationCommandsJSONBody,
     RESTPostAPIApplicationCommandsResult,
+    RESTPostAPIApplicationGuildCommandsJSONBody,
     RESTPostAPIApplicationGuildCommandsResult,
     RESTPostAPIWebhookWithTokenJSONBody,
-    Routes,
-    RESTGetAPIApplicationCommandResult,
-    RESTPatchAPIApplicationCommandJSONBody,
-    RESTPostAPIApplicationGuildCommandsJSONBody,
-    RESTPatchAPIApplicationCommandResult,
-    RESTPatchAPIApplicationGuildCommandJSONBody,
-    RESTPatchAPIApplicationGuildCommandResult,
     RESTPutAPIApplicationCommandsJSONBody,
     RESTPutAPIApplicationCommandsResult,
     RESTPutAPIApplicationGuildCommandsJSONBody,
-    RESTPutAPIApplicationGuildCommandsResult
+    RESTPutAPIApplicationGuildCommandsResult,
+    Routes
 } from 'discord-api-types/v10'
 import express, {
     NextFunction,
     Request,
     Response
 } from 'express'
+import 'express-async-errors'
 import nacl from 'tweetnacl'
 
 export type AutocompleteHandler = (
@@ -225,7 +226,7 @@ export class Client {
         const getCommands = <C extends Command | GuildCommand>(commands: Commands<C>) => {
             return Array.from(commands.values()).flatMap(v => Array.from(v.values(), c => c.data))
         }
-        const r =await Promise.allSettled([
+        const r = await Promise.allSettled([
             this.updateCommands(getCommands(this.commands)),
             ...Array.from(this.guildCommands, ([g, c]) => this.updateGuildCommands(g, getCommands(c)))
         ])
@@ -383,7 +384,7 @@ export class Client {
         next: NextFunction
     ) {
         const abort = () => {
-            res.status(401).end('invalid request signature')
+            res.sendStatus(401)
         }
 
         const signature = req.get('X-Signature-Ed25519')
@@ -444,17 +445,17 @@ export class Client {
             res.json(pong)
             return
         case InteractionType.ApplicationCommand:
-            res.status(204)
+            res.sendStatus(204)
             await this.handleApplicationCommand(interaction)
             return
         case InteractionType.MessageComponent:
-            res.status(204)
+            res.sendStatus(204)
             await this.interactionHandler(this, interaction)
             return
         case InteractionType.ApplicationCommandAutocomplete:
             const autocompleteData = await this.handleAutocomplete(interaction)
             if (autocompleteData === undefined) {
-                res.status(204)
+                res.sendStatus(204)
             } else {
                 const autocomplete: APIApplicationCommandAutocompleteResponse = {
                     type: InteractionResponseType.ApplicationCommandAutocompleteResult,
@@ -464,7 +465,7 @@ export class Client {
             }
             return
         case InteractionType.ModalSubmit:
-            res.status(204)
+            res.sendStatus(204)
             await this.interactionHandler(this, interaction)
             return
         }
