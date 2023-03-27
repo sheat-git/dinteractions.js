@@ -441,17 +441,17 @@ export class Client {
                 res.json(pong).end()
                 return
             case InteractionType.ApplicationCommand:
-                res.status(204).end()
+                res.status(204)
                 await this.handleApplicationCommand(interaction)
                 return
             case InteractionType.MessageComponent:
-                res.status(204).end()
+                res.status(204)
                 await this.interactionHandler(this, interaction)
                 return
             case InteractionType.ApplicationCommandAutocomplete:
                 const autocompleteData = await this.handleAutocomplete(interaction)
                 if (autocompleteData === undefined) {
-                    res.status(204).end()
+                    res.status(204)
                 } else {
                     const autocomplete: APIApplicationCommandAutocompleteResponse = {
                         type: InteractionResponseType.ApplicationCommandAutocompleteResult,
@@ -461,7 +461,7 @@ export class Client {
                 }
                 return
             case InteractionType.ModalSubmit:
-                res.status(204).end()
+                res.status(204)
                 await this.interactionHandler(this, interaction)
                 return
             }
