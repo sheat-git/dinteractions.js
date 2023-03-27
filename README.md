@@ -4,9 +4,6 @@ A discord interactions library.
 
 ```typescript
 import { Client } from 'dinteractions.js'
-import {
-    ApplicationCommandType
-} from 'discord-api-types/v10'
 
 const client = new Client({
     applicationId: 'DISCORD_APPLICATION_ID',
@@ -16,11 +13,10 @@ const client = new Client({
 
 client.addCommand({
     command: {
-        type: ApplicationCommandType.ChatInput,
         name: 'hello',
         description: 'Replies with hello message.'
     },
-    handler: async (client, interaction) => {
+    handle: async (client, interaction) => {
         await client.sendReply(interaction, {
             content: 'hello'
         })

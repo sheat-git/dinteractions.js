@@ -61,11 +61,11 @@ import express, {
 import 'express-async-errors'
 import nacl from 'tweetnacl'
 
-export type AutocompleteHandler<Interaction> = (
+export type AutocompleteHandlerFunc<Interaction> = (
     interaction: Interaction
 ) => Promise<APICommandAutocompleteInteractionResponseCallbackData | undefined>
 
-export type InteractionHandler<Interaction> = (
+export type InteractionHandlerFunc<Interaction> = (
     client: Client,
     interaction: Interaction
 ) => Promise<void>
@@ -74,41 +74,51 @@ export type ClientOptions = {
     applicationId: string
     publicKey: string
     token: string
-    autocompleteHandler?: AutocompleteHandler<APIApplicationCommandAutocompleteInteraction>
-    interactionHandler?: InteractionHandler<APIApplicationCommandInteraction | APIMessageComponentInteraction | APIModalSubmitInteraction>
+    handleAutocomplete?: AutocompleteHandlerFunc<APIApplicationCommandAutocompleteInteraction>
+    handleInteraction?: InteractionHandlerFunc<APIApplicationCommandInteraction | APIMessageComponentInteraction | APIModalSubmitInteraction>
 }
 
 export type Command = {
     type?: ApplicationCommandType.ChatInput
     data: Omit<RESTPostAPIChatInputApplicationCommandsJSONBody, 'type'>
-    handler?: InteractionHandler<APIChatInputApplicationCommandInteraction>
-    autocompleteHandler?: AutocompleteHandler<APIApplicationCommandAutocompleteInteraction>
+    handle?: InteractionHandlerFunc<APIChatInputApplicationCommandInteraction>
+    handleAutocomplete?: AutocompleteHandlerFunc<APIApplicationCommandAutocompleteInteraction>
 } | {
     type: ApplicationCommandType.User
     data: Omit<RESTPostAPIContextMenuApplicationCommandsJSONBody, 'type'>
-    handler?: InteractionHandler<APIUserApplicationCommandInteraction>
+    handle?: InteractionHandlerFunc<APIUserApplicationCommandInteraction>
+    handleAutocomplete?: undefined
 } | {
     type: ApplicationCommandType.Message
     data: Omit<RESTPostAPIContextMenuApplicationCommandsJSONBody, 'type'>
-    handler?: InteractionHandler<APIMessageApplicationCommandInteraction>
+    handle?: InteractionHandlerFunc<APIMessageApplicationCommandInteraction>
+    handleAutocomplete?: undefined
 }
 
 export type GuildCommand = {
     type?: ApplicationCommandType.ChatInput
     data: Omit<RESTPostAPIChatInputApplicationCommandsJSONBody, 'dm_permission' | 'type'>
-    handler?: InteractionHandler<APIChatInputApplicationCommandGuildInteraction>
-    autocompleteHandler?: AutocompleteHandler<APIApplicationCommandAutocompleteGuildInteraction>
+    handle?: InteractionHandlerFunc<APIChatInputApplicationCommandGuildInteraction>
+    handleAutocomplete?: AutocompleteHandlerFunc<APIApplicationCommandAutocompleteGuildInteraction>
 } | {
     type: ApplicationCommandType.User
     data: Omit<RESTPostAPIContextMenuApplicationCommandsJSONBody, 'dm_permission' | 'type'>
-    handler?: InteractionHandler<APIUserApplicationCommandGuildInteraction>
+    handle?: InteractionHandlerFunc<APIUserApplicationCommandGuildInteraction>
+    handleAutocomplete?: undefined
 } | {
     type: ApplicationCommandType.Message
     data: Omit<RESTPostAPIContextMenuApplicationCommandsJSONBody, 'dm_permission' | 'type'>
-    handler?: InteractionHandler<APIMessageApplicationCommandGuildInteraction>
+    handle?: InteractionHandlerFunc<APIMessageApplicationCommandGuildInteraction>
+    handleAutocomplete?: undefined
 }
 
 type Commands<Command> = Map<ApplicationCommandType, Map<string, Command>>
+
+export type InteractionHandler = {
+    willExec: (interaction: APIApplicationCommandInteraction | APIMessageComponentInteraction | APIModalSubmitInteraction) => Promise<boolean>
+    func: InteractionHandlerFunc<APIApplicationCommandInteraction | APIMessageComponentInteraction | APIModalSubmitInteraction>
+    execNext?: boolean
+}
 
 export class Client {
     private readonly applicationId: string
@@ -116,11 +126,12 @@ export class Client {
     private readonly rest: REST
     private readonly commands: Commands<Command>
     private readonly guildCommands: Map<string, Commands<GuildCommand>>
-    private readonly autocompleteHandler: AutocompleteHandler<APIApplicationCommandAutocompleteInteraction>
-    private readonly interactionHandler: InteractionHandler<APIApplicationCommandInteraction | APIMessageComponentInteraction | APIModalSubmitInteraction>
+    private readonly handleAutocomplete: AutocompleteHandlerFunc<APIApplicationCommandAutocompleteInteraction>
+    private readonly handleInteraction: InteractionHandlerFunc<APIApplicationCommandInteraction | APIMessageComponentInteraction | APIModalSubmitInteraction>
+    private readonly interactionHandlers: InteractionHandler[]
 
     get handlers() {
-        return [this.verify(), this.handleInteraction()]
+        return [this.verify(), this.handle()]
     }
 
     constructor(options: ClientOptions) {
@@ -129,8 +140,9 @@ export class Client {
         this.rest = new REST({ version: '10' }).setToken(options.token)
         this.commands = new Map()
         this.guildCommands = new Map()
-        this.autocompleteHandler = options.autocompleteHandler ?? (async _ => undefined)
-        this.interactionHandler = options.interactionHandler ?? (async (_c, _i) => {})
+        this.handleAutocomplete = options.handleAutocomplete ?? (async _ => undefined)
+        this.handleInteraction = options.handleInteraction ?? (async (_c, _i) => {})
+        this.interactionHandlers = []
     }
 
     async ping() {
@@ -150,17 +162,21 @@ export class Client {
         return commands
     }
 
-    addCommand(command: Command) {
-        Client._addCommand(this.commands, command)
+    addCommand(...command: Command[]) {
+        command.forEach(c => { Client._addCommand(this.commands, c) })
     }
 
-    addGuildCommand(guildId: string, command: GuildCommand) {
+    addGuildCommand(guildId: string, ...command: GuildCommand[]) {
         const commands = this.guildCommands.get(guildId)
         if (commands) {
-            Client._addCommand(commands, command)
+            command.forEach(c => { Client._addCommand(commands, c) })
         } else {
-            this.guildCommands.set(guildId, Client._addCommand(new Map(), command))
+            command.forEach(c => { this.guildCommands.set(guildId, Client._addCommand(new Map(), c)) })
         }
+    }
+
+    addHandler(...handler: InteractionHandler[]) {
+        this.interactionHandlers.push(...handler)
     }
 
     async fetchCommands(withLocalizations?: boolean) {
@@ -255,9 +271,12 @@ export class Client {
                 return { ...c.data, type }
             }))
         }
-        const r = await Promise.allSettled([
+        await Promise.allSettled([
             this.updateCommands(getCommands(this.commands) as RESTPutAPIApplicationCommandsJSONBody),
-            ...Array.from(this.guildCommands, ([g, c]) => this.updateGuildCommands(g, getCommands(c) as RESTPutAPIApplicationGuildCommandsJSONBody))
+            ...Array.from(this.guildCommands, ([g, c]) => {
+                if (g === '') { return Promise.resolve(0) }
+                return this.updateGuildCommands(g, getCommands(c) as RESTPutAPIApplicationGuildCommandsJSONBody)
+            })
         ])
     }
 
@@ -459,7 +478,7 @@ export class Client {
         }
     }
 
-    private handleInteraction() {
+    private handle() {
         return async (req: Request, res: Response) => {
             const interaction = req.body as APIInteraction
             switch (interaction.type) {
@@ -471,63 +490,95 @@ export class Client {
                 return
             case InteractionType.ApplicationCommand:
                 res.status(204)
-                await this.handleApplicationCommand(interaction)
+                await this._handleApplicationCommand(interaction)
                 return
             case InteractionType.MessageComponent:
                 res.status(204)
-                await this.interactionHandler(this, interaction)
+                await this._handleInteraction(interaction)
                 return
             case InteractionType.ApplicationCommandAutocomplete:
-                const autocompleteData = await this.handleAutocomplete(interaction)
+                const autocompleteData = await this._handleAutocomplete(interaction)
                 if (autocompleteData === undefined) {
-                    res.status(204)
+                    res.status(204).end()
                 } else {
                     const autocomplete: APIApplicationCommandAutocompleteResponse = {
                         type: InteractionResponseType.ApplicationCommandAutocompleteResult,
                         data: autocompleteData
                     }
-                    res.json(autocomplete)
+                    res.json(autocomplete).end()
                 }
                 return
             case InteractionType.ModalSubmit:
                 res.status(204)
-                await this.interactionHandler(this, interaction)
+                await this._handleInteraction(interaction)
                 return
             }
         }
     }
 
-    private async handleApplicationCommand(
+    private async _handleApplicationCommand(
         interaction: APIApplicationCommandInteraction
     ) {
-        const handler = (interaction.guild_id
-            ? this.guildCommands.get(interaction.guild_id)
-            : this.commands)
-            ?.get(interaction.data.type)
-            ?.get(interaction.data.name)
-            ?.handler
-        if (handler) {
+        const handle = (() => {
+            if (interaction.guild_id) {
+                return this.guildCommands
+                    .get(interaction.guild_id)
+                    ?.get(interaction.data.type)
+                    ?.get(interaction.data.name)
+                    ?? this.guildCommands
+                    .get('')
+                    ?.get(interaction.data.type)
+                    ?.get(interaction.data.name)
+            } else {
+                return this.commands
+                    .get(interaction.data.type)
+                    ?.get(interaction.data.name)
+            }
+        })()
+        if (handle) {
             // @ts-ignore
-            await handler(this, interaction)
+            await handle(this, interaction)
         } else {
-            await this.interactionHandler(this, interaction)
+            await this._handleInteraction(interaction)
         }
     }
 
-    private async handleAutocomplete(
+    private async _handleInteraction(interaction: APIApplicationCommandInteraction | APIMessageComponentInteraction | APIModalSubmitInteraction) {
+        for (const handler of this.interactionHandlers) {
+            if (await handler.willExec(interaction)) {
+                await handler.func(this, interaction)
+                if (!handler.execNext) {
+                    return
+                }
+            }
+        }
+        await this.handleInteraction(this, interaction)
+    }
+
+    private async _handleAutocomplete(
         interaction: APIApplicationCommandAutocompleteInteraction
     ) {
-        const handler = (interaction.guild_id
-            ? this.guildCommands.get(interaction.guild_id)
-            : this.commands)
-            ?.get(interaction.data.type)
-            ?.get(interaction.data.name)
+        const handle = (() => {
+            if (interaction.guild_id) {
+                return this.guildCommands
+                    .get(interaction.guild_id)
+                    ?.get(interaction.data.type)
+                    ?.get(interaction.data.name)
+                    ?? this.guildCommands
+                    .get('')
+                    ?.get(interaction.data.type)
+                    ?.get(interaction.data.name)
+            } else {
+                return this.commands
+                    .get(interaction.data.type)
+                    ?.get(interaction.data.name)
+            }
+        })()
+        if (handle) {
             // @ts-ignore
-            ?.autocompleteHandler
-        if (handler) {
-            return await handler(interaction)
+            return await handle(interaction)
         } else {
-            return await this.autocompleteHandler(interaction)
+            return await this.handleAutocomplete(interaction)
         }
     }
 
