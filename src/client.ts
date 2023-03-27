@@ -381,7 +381,7 @@ export class Client {
     private verify() {
         return (req: Request, res: Response, next: NextFunction) => {
             const abort = () => {
-                res.sendStatus(401)
+                res.sendStatus(401).end()
             }
 
             const signature = req.get('X-Signature-Ed25519')
@@ -438,20 +438,20 @@ export class Client {
                 const pong: APIInteractionResponsePong = {
                     type: InteractionResponseType.Pong
                 }
-                res.json(pong)
+                res.json(pong).end()
                 return
             case InteractionType.ApplicationCommand:
-                res.status(204)
+                res.sendStatus(204).end()
                 await this.handleApplicationCommand(interaction)
                 return
             case InteractionType.MessageComponent:
-                res.status(204)
+                res.sendStatus(204).end()
                 await this.interactionHandler(this, interaction)
                 return
             case InteractionType.ApplicationCommandAutocomplete:
                 const autocompleteData = await this.handleAutocomplete(interaction)
                 if (autocompleteData === undefined) {
-                    res.status(204)
+                    res.sendStatus(204).end()
                 } else {
                     const autocomplete: APIApplicationCommandAutocompleteResponse = {
                         type: InteractionResponseType.ApplicationCommandAutocompleteResult,
@@ -461,7 +461,7 @@ export class Client {
                 }
                 return
             case InteractionType.ModalSubmit:
-                res.status(204)
+                res.sendStatus(204).end()
                 await this.interactionHandler(this, interaction)
                 return
             }
@@ -503,7 +503,7 @@ export class Client {
     serve(path: string, port: number) {
         const app = express()
         app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-            res.sendStatus(500)
+            res.sendStatus(500).end()
             console.error(err)
             next(err)
         })
