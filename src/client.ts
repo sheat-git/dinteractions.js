@@ -534,7 +534,7 @@ export class Client {
                     .get(interaction.data.type)
                     ?.get(interaction.data.name)
             }
-        })()
+        })()?.handle
         if (handle) {
             // @ts-ignore
             await handle(this, interaction)
@@ -573,7 +573,7 @@ export class Client {
                     .get(interaction.data.type)
                     ?.get(interaction.data.name)
             }
-        })()
+        })()?.handleAutocomplete
         if (handle) {
             // @ts-ignore
             return await handle(interaction)
