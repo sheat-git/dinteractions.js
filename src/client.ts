@@ -2,9 +2,12 @@ import {
     REST
 } from '@discordjs/rest'
 import {
-    APIApplicationCommandInteraction,
+    APIApplicationCommandAutocompleteGuildInteraction,
     APIApplicationCommandAutocompleteInteraction,
     APIApplicationCommandAutocompleteResponse,
+    APIApplicationCommandInteraction,
+    APIChatInputApplicationCommandGuildInteraction,
+    APIChatInputApplicationCommandInteraction,
     APICommandAutocompleteInteractionResponseCallbackData,
     APIInteraction,
     APIInteractionResponse,
@@ -15,10 +18,14 @@ import {
     APIInteractionResponsePong,
     APIInteractionResponseUpdateMessage,
     APIMessage,
+    APIMessageApplicationCommandGuildInteraction,
+    APIMessageApplicationCommandInteraction,
     APIMessageComponentInteraction,
     APIModalInteractionResponse,
     APIModalInteractionResponseCallbackData,
     APIModalSubmitInteraction,
+    APIUserApplicationCommandGuildInteraction,
+    APIUserApplicationCommandInteraction,
     ApplicationCommandType,
     InteractionResponseType,
     InteractionType,
@@ -37,6 +44,8 @@ import {
     RESTPostAPIApplicationCommandsResult,
     RESTPostAPIApplicationGuildCommandsJSONBody,
     RESTPostAPIApplicationGuildCommandsResult,
+    RESTPostAPIChatInputApplicationCommandsJSONBody,
+    RESTPostAPIContextMenuApplicationCommandsJSONBody,
     RESTPostAPIWebhookWithTokenJSONBody,
     RESTPutAPIApplicationCommandsJSONBody,
     RESTPutAPIApplicationCommandsResult,
@@ -52,8 +61,8 @@ import express, {
 import 'express-async-errors'
 import nacl from 'tweetnacl'
 
-export type AutocompleteHandler = (
-    interaction: APIApplicationCommandAutocompleteInteraction
+export type AutocompleteHandler<Interaction> = (
+    interaction: Interaction
 ) => Promise<APICommandAutocompleteInteractionResponseCallbackData | undefined>
 
 export type InteractionHandler<Interaction> = (
@@ -65,20 +74,38 @@ export type ClientOptions = {
     applicationId: string
     publicKey: string
     token: string
-    autocompleteHandler?: AutocompleteHandler
+    autocompleteHandler?: AutocompleteHandler<APIApplicationCommandAutocompleteInteraction>
     interactionHandler?: InteractionHandler<APIApplicationCommandInteraction | APIMessageComponentInteraction | APIModalSubmitInteraction>
 }
 
 export type Command = {
-    data: RESTPostAPIApplicationCommandsJSONBody
-    handler?: InteractionHandler<APIApplicationCommandInteraction>
-    autocompleteHandler?: AutocompleteHandler
+    type?: ApplicationCommandType.ChatInput
+    data: Omit<RESTPostAPIChatInputApplicationCommandsJSONBody, 'type'>
+    handler?: InteractionHandler<APIChatInputApplicationCommandInteraction>
+    autocompleteHandler?: AutocompleteHandler<APIApplicationCommandAutocompleteInteraction>
+} | {
+    type: ApplicationCommandType.User
+    data: Omit<RESTPostAPIContextMenuApplicationCommandsJSONBody, 'type'>
+    handler?: InteractionHandler<APIUserApplicationCommandInteraction>
+} | {
+    type: ApplicationCommandType.Message
+    data: Omit<RESTPostAPIContextMenuApplicationCommandsJSONBody, 'type'>
+    handler?: InteractionHandler<APIMessageApplicationCommandInteraction>
 }
 
 export type GuildCommand = {
-    data: RESTPostAPIApplicationGuildCommandsJSONBody
-    handler?: InteractionHandler<APIApplicationCommandInteraction>
-    autocompleteHandler?: AutocompleteHandler
+    type?: ApplicationCommandType.ChatInput
+    data: Omit<RESTPostAPIChatInputApplicationCommandsJSONBody, 'dm_permission' | 'type'>
+    handler?: InteractionHandler<APIChatInputApplicationCommandGuildInteraction>
+    autocompleteHandler?: AutocompleteHandler<APIApplicationCommandAutocompleteGuildInteraction>
+} | {
+    type: ApplicationCommandType.User
+    data: Omit<RESTPostAPIContextMenuApplicationCommandsJSONBody, 'dm_permission' | 'type'>
+    handler?: InteractionHandler<APIUserApplicationCommandGuildInteraction>
+} | {
+    type: ApplicationCommandType.Message
+    data: Omit<RESTPostAPIContextMenuApplicationCommandsJSONBody, 'dm_permission' | 'type'>
+    handler?: InteractionHandler<APIMessageApplicationCommandGuildInteraction>
 }
 
 type Commands<Command> = Map<ApplicationCommandType, Map<string, Command>>
@@ -89,7 +116,7 @@ export class Client {
     private readonly rest: REST
     private readonly commands: Commands<Command>
     private readonly guildCommands: Map<string, Commands<GuildCommand>>
-    private readonly autocompleteHandler: AutocompleteHandler
+    private readonly autocompleteHandler: AutocompleteHandler<APIApplicationCommandAutocompleteInteraction>
     private readonly interactionHandler: InteractionHandler<APIApplicationCommandInteraction | APIMessageComponentInteraction | APIModalSubmitInteraction>
 
     get handlers() {
@@ -113,7 +140,7 @@ export class Client {
     }
 
     private static _addCommand<C extends Command | GuildCommand>(commands: Commands<C>, command: C) {
-        const type = command.data.type ?? ApplicationCommandType.ChatInput
+        const type = command.type ?? ApplicationCommandType.ChatInput
         const typedCommands = commands.get(type)
         if (typedCommands) {
             typedCommands.set(command.data.name, command)
@@ -224,11 +251,13 @@ export class Client {
 
     async syncCommands() {
         const getCommands = <C extends Command | GuildCommand>(commands: Commands<C>) => {
-            return Array.from(commands.values()).flatMap(v => Array.from(v.values(), c => c.data))
+            return Array.from(commands.entries()).flatMap(([type, v]) => Array.from(v.values(), c => {
+                return { ...c.data, type }
+            }))
         }
         const r = await Promise.allSettled([
-            this.updateCommands(getCommands(this.commands)),
-            ...Array.from(this.guildCommands, ([g, c]) => this.updateGuildCommands(g, getCommands(c)))
+            this.updateCommands(getCommands(this.commands) as RESTPutAPIApplicationCommandsJSONBody),
+            ...Array.from(this.guildCommands, ([g, c]) => this.updateGuildCommands(g, getCommands(c) as RESTPutAPIApplicationGuildCommandsJSONBody))
         ])
     }
 
@@ -478,6 +507,7 @@ export class Client {
             ?.get(interaction.data.name)
             ?.handler
         if (handler) {
+            // @ts-ignore
             await handler(this, interaction)
         } else {
             await this.interactionHandler(this, interaction)
@@ -492,6 +522,7 @@ export class Client {
             : this.commands)
             ?.get(interaction.data.type)
             ?.get(interaction.data.name)
+            // @ts-ignore
             ?.autocompleteHandler
         if (handler) {
             return await handler(interaction)
