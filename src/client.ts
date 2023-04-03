@@ -159,7 +159,6 @@ export class Client {
         } else {
             commands.set(type, new Map().set(command.data.name, command))
         }
-        return commands
     }
 
     addCommand(...command: Command[]) {
@@ -171,7 +170,9 @@ export class Client {
         if (commands) {
             command.forEach(c => { Client._addCommand(commands, c) })
         } else {
-            command.forEach(c => { this.guildCommands.set(guildId, Client._addCommand(new Map(), c)) })
+            const newCommands = new Map()
+            this.guildCommands.set(guildId, newCommands)
+            command.forEach(c => { Client._addCommand(newCommands, c) })
         }
     }
 
