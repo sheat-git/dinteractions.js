@@ -12,7 +12,7 @@ const client = new Client({
 })
 
 client.addCommand({
-    command: {
+    data: {
         name: 'hello',
         description: 'Replies with hello message.'
     },
